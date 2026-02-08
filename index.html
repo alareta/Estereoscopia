@@ -1,157 +1,135 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  <meta charset="UTF-8">
+  <title>Visor Estereoscópico - Pausa y Movimiento</title>
   <style>
-    body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #fff; overflow: hidden; }
-    canvas { max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: pixelated; }
+    body { margin: 0; background: #FFF; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; color: white; font-family: sans-serif; overflow: hidden; }
+    canvas { border: 1px solid #333; box-shadow: 0 0 10px rgba(0,0,0,0.8); cursor: move; max-width: 95vw; max-height: 90vh; }
+    .ui { margin-top: 15px; color: #666; font-size: 14px; pointer-events: none; }
   </style>
 </head>
 <body>
+
+<canvas id="canvas" width="800" height="800"></canvas>
+<div class="ui">Mueve el ratón para interactuar</div>
+
 <script>
-  /* * Prueba de Esteroscopia 3D
- * Autor: alareta
- * Licencia: MIT
- * Repositorio: https://github.com/alareta/Esteroscopia/
- */
-let img, depthMap;
-let maxDisparitySlider;
-let sceneSelector;
+	let img, depthMap;
+	let maxDisparitySlider;
 
-// Lista de escenas disponibles
-let scenes = [
-  {
-    name: "Escena 1",
-    img: "imagenes/1_imagen.jpg",
-    depth: "imagenes/1_profundidad.png"
-  },
-  {
-    name: "Escena 2",
-    img: "imagenes/2_imagen.jpg",
-    depth: "imagenes/2_profundidad.png"
-  }
-];
+	// Lista de escenas disponibles
+	let scenes = [
+	  {
+	    name: "Escena 1",
+	    img: "imagenes/1_imagen.jpg",
+	    depth: "imagenes/1_profundidad.png"
+	  },
+	  {
+	    name: "Escena 2",
+	    img: "imagenes/2_imagen.jpg",
+	    depth: "imagenes/2_profundidad.png"
+	  }
+	];
 
-function preload() {
-  // Cargamos la primera escena por defecto
-  img = loadImage(scenes[0].img);
-  depthMap = loadImage(scenes[0].depth);
-}
+	function preload() {
+	  // Cargamos la primera escena por defecto
+	  img = loadImage(scenes[0].img);
+	  depthMap = loadImage(scenes[0].depth);
+	}
 
-function setup() {
-  createCanvas(800, 800);
+	function setup() {
+	  createCanvas(800, 800);
 
-  // Slider fuerza 3D
-  maxDisparitySlider = createSlider(0, 40, 18, 1);
-  maxDisparitySlider.position(20, 20);
-  maxDisparitySlider.style("width", "200px");
+	  img.resize(800, 800);
+	  depthMap.resize(800, 800);
 
-  // Selector de escenas
-  sceneSelector = createSelect();
-  sceneSelector.position(20, 60);
+	  img.loadPixels();
+	  depthMap.loadPixels();
 
-  // Añadir opciones
-  for (let i = 0; i < scenes.length; i++) {
-    sceneSelector.option(scenes[i].name, i);
-  }
+	  // Slider de control 3D
+	  maxDisparitySlider = createSlider(0, 40, 18, 1);
+	  maxDisparitySlider.position(20, 20);
+	  maxDisparitySlider.style("width", "200px");
+	}
 
-  // Evento: cambiar escena
-  sceneSelector.changed(loadScene);
+	function draw() {
+	  background(0);
 
-  prepareImages();
-}
+	  let maxDisparity = maxDisparitySlider.value();
 
-function prepareImages() {
-  img.resize(800, 800);
-  depthMap.resize(800, 800);
+	  // Cámara lateral controlada por ratón
+	  let t = map(mouseX, 0, width, -1, 1);
 
-  img.loadPixels();
-  depthMap.loadPixels();
-}
+	  let view = generateView(t, maxDisparity);
+	  image(view, 0, 0);
 
-function loadScene() {
-  let index = int(sceneSelector.value());
+	  // Texto UI
+	  fill(255);
+	  noStroke();
+	  textSize(14);
+	  text("Depth strength: " + maxDisparity, 20, 60);
+	  text("Press S to save frame", 20, 80);
+	}
 
-  loadImage(scenes[index].img, (newImg) => {
-    img = newImg;
+	function generateView(t, maxDisparity) {
 
-    loadImage(scenes[index].depth, (newDepth) => {
-      depthMap = newDepth;
-      prepareImages();
-    });
-  });
-}
+	  let view = createImage(img.width, img.height);
+	  view.loadPixels();
 
-function draw() {
-  background(0);
+	  // Copia base (fondo)
+	  for (let i = 0; i < img.pixels.length; i++) {
+	    view.pixels[i] = img.pixels[i];
+	  }
 
-  let maxDisparity = maxDisparitySlider.value();
-  let t = map(mouseX, 0, width, -1, 1);
+	  let zBuffer = new Float32Array(img.width * img.height);
+	  zBuffer.fill(-1);
 
-  let view = generateView(t, maxDisparity);
-  image(view, 0, 0);
+	  for (let y = 0; y < img.height; y++) {
+	    for (let x = 0; x < img.width; x++) {
 
-  fill(255);
-  noStroke();
-  textSize(14);
-  text("Depth strength: " + maxDisparity, 20, 110);
-  text("Press S to save frame", 20, 130);
-}
+	      let idx = x + y * img.width;
+	      let p = idx * 4;
 
-function generateView(t, maxDisparity) {
-  let view = createImage(img.width, img.height);
-  view.loadPixels();
+	      // Depth (blanco = lejos → invertimos)
+	      let d = depthMap.pixels[p] / 255;
+	      d = 1.0 - d;
 
-  // Fondo base
-  for (let i = 0; i < img.pixels.length; i++) {
-    view.pixels[i] = img.pixels[i];
-  }
+	      // Curva suave (resalta primer plano)
+	      d = pow(d, 1.4);
 
-  let zBuffer = new Float32Array(img.width * img.height);
-  zBuffer.fill(-1);
+	      // Shift horizontal
+	      let shift = int((d - 0.5) * maxDisparity * t);
+	      let tx = x + shift;
 
-  for (let y = 0; y < img.height; y++) {
-    for (let x = 0; x < img.width; x++) {
+	      if (tx < 0 || tx >= img.width) continue;
 
-      let idx = x + y * img.width;
-      let p = idx * 4;
+	      let tidx = tx + y * img.width;
+	      let tp = tidx * 4;
 
-      // Depth invertido: blanco = lejos
-      let d = depthMap.pixels[p] / 255;
-      d = 1.0 - d;
+	      // Z-buffer
+	      if (d >= zBuffer[tidx]) {
+	        view.pixels[tp]     = img.pixels[p];
+	        view.pixels[tp + 1] = img.pixels[p + 1];
+	        view.pixels[tp + 2] = img.pixels[p + 2];
+	        view.pixels[tp + 3] = 255;
+	        zBuffer[tidx] = d;
+	      }
+	    }
+	  }
 
-      // Curva suave
-      d = pow(d, 1.4);
+	  view.updatePixels();
+	  return view;
+	}
 
-      let shift = int((d - 0.5) * maxDisparity * t);
-      let tx = x + shift;
-
-      if (tx < 0 || tx >= img.width) continue;
-
-      let tidx = tx + y * img.width;
-      let tp = tidx * 4;
-
-      if (d >= zBuffer[tidx]) {
-        view.pixels[tp]     = img.pixels[p];
-        view.pixels[tp + 1] = img.pixels[p + 1];
-        view.pixels[tp + 2] = img.pixels[p + 2];
-        view.pixels[tp + 3] = 255;
-        zBuffer[tidx] = d;
-      }
-    }
-  }
-
-  view.updatePixels();
-  return view;
-}
-
-// Guardar frame
-function keyPressed() {
-  if (key === "s" || key === "S") {
-    saveCanvas("parallax_frame", "png");
-  }
-}
-
+	// Guardar frame con tecla S
+	function keyPressed() {
+	  if (key === "s" || key === "S") {
+	    saveCanvas("parallax_frame", "png");
+	  }
+	}
+ 
 </script>
+
 </body>
 </html>
