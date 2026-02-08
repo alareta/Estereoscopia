@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
+  <style>
+    body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #fff; overflow: hidden; }
+    canvas { max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: pixelated; }
+  </style>
+</head>
+<body>
+<script>
+let img, depthMap, view, zBuffer;
+const MAX_DISPARITY = 18; 
+let autoT = 0;
+let lastMouseX = 0;
+let mouseInteractionTimer = 0;
+
+function preload() {
+  img = loadImage("https://raw.githubusercontent.com/alareta/Esteroscopia/refs/heads/main/imagenes/imagen.jpg", () => {}, () => {}, "anonymous");
+  depthMap = loadImage("https://raw.githubusercontent.com/alareta/Esteroscopia/refs/heads/main/imagenes/profundidad.png", () => {}, () => {}, "anonymous");
+}
+
+function setup() {
+  createCanvas(800, 800);
+  img.resize(800, 800);
+  depthMap.resize(800, 800);
+  
+  img.loadPixels();
+  depthMap.loadPixels();
+  
+  view = createImage(800, 800);
+  zBuffer = new Float32Array(800 * 800);
+  lastMouseX = mouseX;
+}
+
+function draw() {
+  background(0);
+  
+  let t;
+  
+  // Detectar si el usuario está moviendo el ratón
+  if (abs(mouseX - lastMouseX) > 0.1) {
+    mouseInteractionTimer = 120; // 2 segundos de prioridad al ratón (a 60fps)
+  }
+  
+  if (mouseInteractionTimer > 0) {
+    // Control manual
+    t = map(mouseX, 0, width, -1, 1, true);
+    mouseInteractionTimer--;
+  } else {
+    // Movimiento automático suave (oscilación de lado a lado)
+    // El valor de frameCount * 0.02 controla la velocidad
+    autoT = sin(frameCount * 0.15); 
+    t = autoT;
+  }
+  
+  lastMouseX = mouseX;
+
+  generateView(t, MAX_DISPARITY);
+  image(view, 0, 0);
+}
+
+function generateView(t, maxDisparity) {
+  view.loadPixels();
+  view.pixels.set(img.pixels);
+  zBuffer.fill(-1);
+
+  for (let y = 0; y < 800; y++) {
+    for (let x = 0; x < 800; x++) {
+      let idx = x + y * 800;
+      let p = idx * 4;
+
+      let d = depthMap.pixels[p] / 255;
+      d = 1.0 - d; 
+      d = pow(d, 1.2); 
+
+      let shift = int((d - 0.5) * maxDisparity * t);
+      let tx = x + shift;
+
+      if (tx >= 0 && tx < 800) {
+        let tidx = tx + y * 800;
+        if (d > zBuffer[tidx]) {
+          let tp = tidx * 4;
+          view.pixels[tp]     = img.pixels[p];
+          view.pixels[tp + 1] = img.pixels[p + 1];
+          view.pixels[tp + 2] = img.pixels[p + 2];
+          view.pixels[tp + 3] = 255;
+          zBuffer[tidx] = d;
+        }
+      }
+    }
+  }
+  view.updatePixels();
+}
+
+function keyPressed() {
+  if (key === "s" || key === "S") saveCanvas("render_auto", "png");
+}
+</script>
+</body>
+</html>
