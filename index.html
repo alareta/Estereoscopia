@@ -1,50 +1,43 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
-  <style>
-    body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #fff; overflow: hidden; font-family: sans-serif; }
-    canvas { max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: pixelated; }
-    /* Estilo para el selector */
-    select { position: absolute; top: 10px; left: 10px; z-index: 10; padding: 5px; border-radius: 4px; background: rgba(255,255,255,0.8); }
-  </style>
-</head>
-<body>
-<script>
 /**
  * Prueba de Esteroscopia 3D con Selector de Escenas
- * Autor: alareta
+ * Autor: alareta (Optimizado)
  * Licencia: MIT
- * Repositorio: https://github.com/alareta/Esteroscopia/
  */
 
 let img, depthMap, view, zBuffer;
 let selector;
 const MAX_DISPARITY = 18; 
-let autoT = 0;
 let lastMouseX = 0;
 let mouseInteractionTimer = 0;
 
-// Definición de las escenas disponibles
+// Configuración de Resolución
+const W = 800; // Ancho visual en pantalla
+const H = 800; // Alto visual en pantalla
+const RES = 0.7; // 0.5 = Mitad de resolución (Mejor rendimiento)
+
+// Dimensiones internas de cálculo
+let internalW = W * RES;
+let internalH = H * RES;
+
+// Variable para el suavizado (Lerp)
+let currentT = 0;
+
 const escenas = [
-  { nombre: "Escena 1", img: "imagenes/1_imagen.jpg", depth: "imagenes/1_profundidad.png" },
-  { nombre: "Escena 2", img: "imagenes/2_imagen.jpg", depth: "imagenes/2_profundidad.png" },
-  { nombre: "Escena 3", img: "imagenes/3_imagen.jpg", depth: "imagenes/3_profundidad.png" },
-  { nombre: "Escena 4", img: "imagenes/4_imagen.jpg", depth: "imagenes/4_profundidad.png" },
-  { nombre: "Escena 5", img: "imagenes/5_imagen.jpg", depth: "imagenes/5_profundidad.png" },
-  { nombre: "Escena 6", img: "imagenes/6_imagen.jpg", depth: "imagenes/6_profundidad.png" }
+  { nombre: "Escena 1", img: "https://raw.githubusercontent.com/alareta/Estereoscopia/refs/heads/main/imagenes/1_imagen.jpg", depth: "https://raw.githubusercontent.com/alareta/Estereoscopia/refs/heads/main/imagenes/1_profundidad.png" },
+  { nombre: "Escena 2", img: "https://raw.githubusercontent.com/alareta/Estereoscopia/refs/heads/main/imagenes/2_imagen.jpg", depth: "https://raw.githubusercontent.com/alareta/Estereoscopia/refs/heads/main/imagenes/2_profundidad.png" },
+  { nombre: "Escena 3", img: "https://raw.githubusercontent.com/alareta/Estereoscopia/refs/heads/main/imagenes/3_imagen.jpg", depth: "https://raw.githubusercontent.com/alareta/Estereoscopia/refs/heads/main/imagenes/3_profundidad.png" },
+  { nombre: "Escena 4", img: "https://raw.githubusercontent.com/alareta/Estereoscopia/refs/heads/main/imagenes/4_imagen.jpg", depth: "https://raw.githubusercontent.com/alareta/Estereoscopia/refs/heads/main/imagenes/4_profundidad.png" },
+  { nombre: "Escena 5", img: "https://raw.githubusercontent.com/alareta/Estereoscopia/refs/heads/main/imagenes/5_imagen.jpg", depth: "https://raw.githubusercontent.com/alareta/Estereoscopia/refs/heads/main/imagenes/5_profundidad.png" },
+  { nombre: "Escena 6", img: "https://raw.githubusercontent.com/alareta/Estereoscopia/refs/heads/main/imagenes/6_imagen.jpg", depth: "https://raw.githubusercontent.com/alareta/Estereoscopia/refs/heads/main/imagenes/6_profundidad.png" }
 ];
 
 function preload() {
-  // Cargamos la primera escena por defecto
   cargarImagenes(0);
 }
 
 function setup() {
-  createCanvas(800, 800);
+  createCanvas(W, H); // Usamos las constantes W y H
   
-  // Crear el menú desplegable
   selector = createSelect();
   selector.style("position", "relative");
   selector.style("font-size", "18px");
@@ -56,6 +49,9 @@ function setup() {
   });
   selector.changed(cambiarEscena);
 
+  // Opcional: si quieres pixel art retro, descomenta esto:
+  //noSmooth(); 
+  
   inicializarBuffers();
   lastMouseX = mouseX;
 }
@@ -67,27 +63,28 @@ function cargarImagenes(index) {
 
 function procesarImagen() {
   if (img.width > 0 && depthMap.width > 0) {
-    img.resize(800, 800);
-    depthMap.resize(800, 800);
+    // Redimensionamos a la resolución interna (400x400)
+    img.resize(internalW, internalH); 
+    depthMap.resize(internalW, internalH);
     img.loadPixels();
     depthMap.loadPixels();
   }
 }
 
 function inicializarBuffers() {
-  view = createImage(800, 800);
-  zBuffer = new Float32Array(800 * 800);
+  view = createImage(internalW, internalH);
+  zBuffer = new Float32Array(internalW * internalH);
 }
 
 function cambiarEscena() {
   let index = selector.value();
-  // Mostramos un fondo negro momentáneo mientras carga
   background(0);
   cargarImagenes(index);
 }
 
 function draw() {
-  if (!img.pixels.length || !depthMap.pixels.length) {
+  // Verificación de seguridad: si no hay pixeles, no dibujamos
+  if (!img || !depthMap || !img.pixels || !depthMap.pixels || img.pixels.length === 0) {
     background(0);
     fill(255);
     textAlign(CENTER);
@@ -96,35 +93,55 @@ function draw() {
   }
 
   background(0);
-  let t;
+  
+  // --- LÓGICA DE MOVIMIENTO CON LERP ---
+  let targetT = 0;
   
   if (abs(mouseX - lastMouseX) > 0.1) {
     mouseInteractionTimer = 40; 
   }
   
   if (mouseInteractionTimer > 0) {
-    t = map(mouseX, 0, width, -1, 1, true);
+    // Objetivo: Mouse
+    targetT = map(mouseX, 0, width, -1, 1, true);
     mouseInteractionTimer--;
   } else {
-    autoT = sin(frameCount * 0.15); 
-    t = autoT;
+    // Objetivo: Automático (más lento: 0.05)
+    targetT = sin(frameCount * 0.06); 
   }
   
   lastMouseX = mouseX;
-  generateView(t, MAX_DISPARITY);
-  image(view, 0, 0);
+
+  // Suavizado: Acercamos currentT a targetT un 10% cada frame
+  currentT = lerp(currentT, targetT, 0.1);
+
+  // Optimizacion: Solo generamos si hay movimiento perceptible
+  if (abs(currentT - targetT) > 0.001 || mouseInteractionTimer > 0) {
+     generateView(currentT, MAX_DISPARITY);
+  }
+
+  // Dibujamos la imagen pequeña estirada al tamaño completo
+  image(view, 0, 0, width, height);
 }
 
 function generateView(t, maxDisparity) {
+  // Aseguramos que view esté listo para escribir
   view.loadPixels();
-  view.pixels.set(img.pixels);
+  
+  // Copiar fondo base (opcional, ayuda a reducir agujeros negros)
+  // view.pixels.set(img.pixels); 
+  
+  // Limpiar Z-Buffer
   zBuffer.fill(-1);
 
-  for (let y = 0; y < 800; y++) {
-    for (let x = 0; x < 800; x++) {
-      let idx = x + y * 800;
-      let p = idx * 4;
+  // Bucle usando dimensiones INTERNAS (internalW/H)
+  for (let y = 0; y < internalH; y++) {
+    for (let x = 0; x < internalW; x++) {
+      
+      let idx = x + y * internalW; 
+      let p = idx * 4;             
 
+      // Leemos profundidad (Canal Rojo)
       let d = depthMap.pixels[p] / 255;
       d = 1.0 - d; 
       d = pow(d, 1.2); 
@@ -132,10 +149,13 @@ function generateView(t, maxDisparity) {
       let shift = int((d - 0.5) * maxDisparity * t);
       let tx = x + shift;
 
-      if (tx >= 0 && tx < 800) {
-        let tidx = tx + y * 800;
+      // Verificamos límites con internalW
+      if (tx >= 0 && tx < internalW) { 
+        let tidx = tx + y * internalW; 
+        
         if (d > zBuffer[tidx]) {
           let tp = tidx * 4;
+          
           view.pixels[tp]     = img.pixels[p];
           view.pixels[tp + 1] = img.pixels[p + 1];
           view.pixels[tp + 2] = img.pixels[p + 2];
@@ -151,6 +171,3 @@ function generateView(t, maxDisparity) {
 function keyPressed() {
   if (key === "s" || key === "S") saveCanvas("render_" + selector.value(), "png");
 }
-</script>
-</body>
-</html>
