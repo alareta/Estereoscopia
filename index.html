@@ -14,7 +14,8 @@
 <script>
 /**
  * Prueba de Esteroscopia 3D con Selector de Escenas
- * Autor: alareta (Optimizado)
+ * Versión: FINAL OPTIMIZADA (Lerp + Rescaling + Sleep Mode)
+ * Autor: alareta
  * Licencia: MIT
  */
 
@@ -24,10 +25,10 @@ const MAX_DISPARITY = 18;
 let lastMouseX = 0;
 let mouseInteractionTimer = 0;
 
-// Configuración de Resolución
-const W = 800; // Ancho visual en pantalla
-const H = 800; // Alto visual en pantalla
-const RES = 0.7; // 0.5 = Mitad de resolución (Mejor rendimiento)
+// --- CONFIGURACIÓN DE RENDIMIENTO ---
+const W = 800;   // Ancho del canvas
+const H = 800;   // Alto del canvas
+const RES = 0.5; // 0.5 = 50% resolución (Mejor rendimiento)
 
 // Dimensiones internas de cálculo
 let internalW = W * RES;
@@ -50,7 +51,7 @@ function preload() {
 }
 
 function setup() {
-  createCanvas(W, H); // Usamos las constantes W y H
+  createCanvas(W, H);
   
   selector = createSelect();
   selector.style("position", "relative");
@@ -63,9 +64,6 @@ function setup() {
   });
   selector.changed(cambiarEscena);
 
-  // Opcional: si quieres pixel art retro, descomenta esto:
-  //noSmooth(); 
-  
   inicializarBuffers();
   lastMouseX = mouseX;
 }
@@ -77,7 +75,7 @@ function cargarImagenes(index) {
 
 function procesarImagen() {
   if (img.width > 0 && depthMap.width > 0) {
-    // Redimensionamos a la resolución interna (400x400)
+    // Redimensionamos a la resolución interna para ganar velocidad
     img.resize(internalW, internalH); 
     depthMap.resize(internalW, internalH);
     img.loadPixels();
@@ -93,89 +91,91 @@ function inicializarBuffers() {
 function cambiarEscena() {
   let index = selector.value();
   background(0);
+  // Reiniciamos currentT para evitar saltos bruscos al cambiar
+  currentT = 0; 
   cargarImagenes(index);
 }
 
 function draw() {
-  // 1. SEGURIDAD: Si no hay datos, mensaje de carga y salir
+  // 1. SEGURIDAD: Si no hay datos cargados, salir.
   if (!img || !depthMap || !img.pixels || !depthMap.pixels || img.pixels.length === 0) {
     background(0);
     fill(255);
     textAlign(CENTER);
-    text("Cargando escena...", width/2, height/2);
+    text("Cargando...", width/2, height/2);
     return;
   }
 
-  // 2. CALCULAR OBJETIVOS
+  // 2. CALCULAR OBJETIVO
   let targetT = 0;
   
+  // Detectar movimiento del mouse
   if (abs(mouseX - lastMouseX) > 0.1) {
     mouseInteractionTimer = 40; 
   }
   
   if (mouseInteractionTimer > 0) {
+    // Modo interactivo
     targetT = map(mouseX, 0, width, -1, 1, true);
     mouseInteractionTimer--;
   } else {
+    // Modo automático (Onda suave)
     targetT = sin(frameCount * 0.05); 
   }
   lastMouseX = mouseX;
 
-  // 3. REPOSO (OPTIMIZACIÓN CLAVE)
-  // Calculamos cuánto nos falta para llegar al objetivo
-  let dist = abs(targetT - currentT);
+  // 3. OPTIMIZACIÓN DE REPOSO (Early Exit)
+  // Calculamos la diferencia entre donde estamos y donde queremos ir
+  let diff = abs(targetT - currentT);
 
-  // Si estamos muy cerca (menos de 0.001) Y el mouse está quieto...
-  // ¡No dibujes nada! Deja el último frame en pantalla tal cual está.
-  if (dist < 0.0005 && mouseInteractionTimer <= 0) {
-      return; // <--- SALIDA TEMPRANA: Ahorra CPU/Batería
+  // Si la diferencia es imperceptible, NO DIBUJAMOS NADA.
+  // Esto baja el uso de CPU al mínimo.
+  if (diff < 0.0005) {
+      return; 
   }
 
-  // 4. SI LLEGAMOS AQUÍ, ES QUE HAY MOVIMIENTO
-  background(0); // Solo borramos si vamos a dibujar algo nuevo
+  // 4. DIBUJAR (Solo si pasamos el filtro anterior)
+  background(0); 
 
-  // Aplicamos el movimiento
+  // Aplicamos Lerp
   currentT = lerp(currentT, targetT, 0.1);
 
-  // Generamos la nueva vista
   generateView(currentT, MAX_DISPARITY);
-
-  // Dibujamos
+  
+  // Dibujamos estirando la imagen pequeña al tamaño del canvas
   image(view, 0, 0, width, height);
 }
 
 function generateView(t, maxDisparity) {
-  // Aseguramos que view esté listo para escribir
   view.loadPixels();
-  
-  // Copiar fondo base (opcional, ayuda a reducir agujeros negros)
-  // view.pixels.set(img.pixels); 
-  
-  // Limpiar Z-Buffer
   zBuffer.fill(-1);
 
-  // Bucle usando dimensiones INTERNAS (internalW/H)
+  // Bucle optimizado usando internalW / internalH
   for (let y = 0; y < internalH; y++) {
     for (let x = 0; x < internalW; x++) {
       
       let idx = x + y * internalW; 
       let p = idx * 4;             
 
-      // Leemos profundidad (Canal Rojo)
-      let d = depthMap.pixels[p] / 255;
+      // Seguridad de array
+      if (p >= depthMap.pixels.length) continue;
+
+      let d = depthMap.pixels[p] / 255; // 0..1
+      
+      // Ajuste de curva de profundidad para dar mas realismo
       d = 1.0 - d; 
       d = pow(d, 1.2); 
 
       let shift = int((d - 0.5) * maxDisparity * t);
       let tx = x + shift;
 
-      // Verificamos límites con internalW
+      // Verificamos límites
       if (tx >= 0 && tx < internalW) { 
         let tidx = tx + y * internalW; 
         
         if (d > zBuffer[tidx]) {
           let tp = tidx * 4;
-          
+          // Escribimos el pixel desplazado
           view.pixels[tp]     = img.pixels[p];
           view.pixels[tp + 1] = img.pixels[p + 1];
           view.pixels[tp + 2] = img.pixels[p + 2];
